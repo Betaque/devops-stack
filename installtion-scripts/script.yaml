@@ -1,0 +1,128 @@
+---
+- hosts: target-host
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: Update apt package cache
+      become: true
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Upgrade all packages
+      become: true
+      ansible.builtin.apt:
+        upgrade: dist
+
+    - name: Check if Docker is installed ##### For the Docker Installation 
+      stat:
+        path: /usr/bin/docker
+      register: docker_installed
+
+    - name: Install Docker
+      become: true
+      ansible.builtin.apt:
+        name: docker.io
+        state: present
+      when: docker_installed.stat.exists == False
+    
+    - name: Add Docker group
+      ansible.builtin.group:
+        name: docker
+        state: present
+
+    - name: Add user to Docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+
+    - name: Enable and start Docker services
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+      loop:
+        - docker.service
+
+    - name: Check if Helm is installed  ######For the Helm Installation
+      stat:
+        path: /usr/local/bin/helm
+      register: helm_installed
+
+    - name: Install Helm
+      become: true
+      ansible.builtin.get_url:
+        url: "https://get.helm.sh/helm-v3.7.0-linux-amd64.tar.gz"  
+        dest: "/tmp/helm.tar.gz"
+
+    - name: Extract Helm binary
+      become: true
+      ansible.builtin.unarchive:
+        src: "/tmp/helm.tar.gz"
+        dest: "/tmp"
+        remote_src: yes
+      when: helm_installed.stat.exists == False
+
+    - name: Move Helm binary to /usr/local/bin
+      become: true
+      ansible.builtin.command: mv /tmp/linux-amd64/helm /usr/local/bin/
+      when: helm_installed.stat.exists == False
+
+
+    - name: Check if AWS CLI is installed #########For the AWS cli Installation
+      stat:
+        path: /usr/bin/aws
+      register: awscli_installed
+
+    - name: Install AWS CLI
+      become: true
+      ansible.builtin.apt:
+        name: awscli
+        state: present
+      when: awscli_installed.stat.exists == False  
+
+
+    - name: Check if Kubectl is installed #########For the Kubectl Installation 
+      stat:
+        path: /usr/bin/kubectl
+      register: kubectl_installed
+
+    - name: Add an apt signing key for Kubernetes 
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+
+    - name: Adding apt repository for Kubernetes
+      apt_repository:
+        repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+        filename: kubernetes.list
+
+    - name: Install Kubernetes binaries
+      apt: 
+        name: kubectl
+        state: present
+        update_cache: yes
+      when: kubectl_installed.stat.exists == False  
+
+
+    - name: Import the Google Cloud public key #########For the GCP console Installation
+      become: true
+      ansible.builtin.get_url:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        dest: /tmp/apt-key.gpg
+      register: gcp_public_key
+      changed_when: gcp_public_key.changed
+
+    - name: Add the gcloud CLI distribution URI as a package source
+      become: true
+      ansible.builtin.copy:
+        content: "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main\n"
+        dest: /etc/apt/sources.list.d/google-cloud-sdk.list
+      when: gcp_public_key.changed
+
+    - name: Install the gcloud CLI
+      become: true
+      ansible.builtin.apt:
+        name: google-cloud-sdk
+        state: present
